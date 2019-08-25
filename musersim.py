@@ -125,7 +125,12 @@ if __name__ == '__main__':
         # plt.show()
 
         # vt.data['vis'] *= 0.0
-        npixel=512
+        if freq==400:
+            npixel=256
+        elif freq>1000 and freq<=2000:
+            npix = 1024
+        elif freq>4000:
+            npix = 2048
         # cellsize = None #1*3.1415926535/180./npixel
         cellsize = round(1.*numpy.pi/180./npixel,7)/2.
         facets = 8
