@@ -87,6 +87,7 @@ def create_configuration(name: str = 'LOWBD2', **kwargs):
 
 if __name__ == '__main__':
 
+    init_logging()
     log = logging.getLogger()
     log.setLevel(logging.DEBUG)
     log.addHandler(logging.StreamHandler(sys.stdout))
@@ -100,15 +101,17 @@ if __name__ == '__main__':
             'size': 9}
     matplotlib.rc('font', **font)
 
-    test_list = ( ('MUSER-1',400),('MUSER-1',1400),('MUSER-2',2000),('MUSER-2',15000))
+    test_list = (('MUSER-2',4000),) #,('MUSER-1',1400),('MUSER-2',2000),('MUSER-2',15000))
+
+    arlexecute.set_client(use_dask=True, threads_per_worker=1, memory_limit=16 * 1024 * 1024 * 1024, n_workers=8,
+                          local_dir=dask_dir)
 
     for (muser,freq) in test_list:
         lowcore = create_configuration(muser)
 
         # lowcore = create_named_configuration('MUSER')
         # arlexecute.set_client(use_dask=True)
-        arlexecute.set_client(use_dask=True, threads_per_worker=1, memory_limit=8 * 1024 * 1024 * 1024, n_workers=8,
-                              local_dir=dask_dir)
+
         times = numpy.array([-3.0, -2.0, -1.0, 0.0, 1.0, 2.0, 3.0]) * (numpy.pi / 12.0)  #[-3.0, -2.0, -1.0, 0.0, 1.0, 2.0, 3.0]
         # times = numpy.array([0.0]) * (numpy.pi / 12.0)  #[-3.0, -2.0, -1.0, 0.0, 1.0, 2.0, 3.0]
         frequency = numpy.array([freq*1e6])
@@ -127,12 +130,16 @@ if __name__ == '__main__':
         # vt.data['vis'] *= 0.0
         if freq==400:
             npixel=256
-        elif freq>1000 and freq<=2000:
-            npix = 1024
-        elif freq>4000:
-            npix = 2048
+        elif freq>1000 and freq<2000:
+            npixel = 1024
+        elif freq>=2000 and freq<6000:
+            npixel = 2048
+        elif freq >= 6000 and freq <= 12000:
+            npixel = 4096
+        else:
+            npixel = 6144
+        cellsize = 1. * numpy.pi / 180. / (npixel)
         # cellsize = None #1*3.1415926535/180./npixel
-        cellsize = round(1.*numpy.pi/180./npixel,7)/2.
         facets = 8
         flux = numpy.array([[200.0]])
 
@@ -152,11 +159,11 @@ if __name__ == '__main__':
 
         vt.data['vis'] *= 0.0
 
-        model = create_image_from_visibility(vt, npixel=npixel, npol=1) #, cellsize=cellsize)
+        model = create_image_from_visibility(vt, npixel=npixel, npol=1, cellsize=cellsize)
         spacing_pixels = npixel // facets
         log.info('Spacing in pixels = %s' % spacing_pixels)
         spacing = model.wcs.wcs.cdelt* spacing_pixels #180.0 * cellsize * spacing_pixels / numpy.pi
-        centers = -1.5, -0.5, +0.5, +1.5
+        centers = -3.0, -2.0, -1.0, -0.5, +0.5, +1.0, 2.0, 3.0
         comps = list()
         for iy in centers:
             for ix in centers:
@@ -171,7 +178,7 @@ if __name__ == '__main__':
 
         arlexecute.set_client(use_dask=True)
 
-        dirty = create_image_from_visibility(vt, npixel=npixel, #cellsize=cellsize,
+        dirty = create_image_from_visibility(vt, npixel=npixel, cellsize=cellsize,
                                              polarisation_frame=PolarisationFrame("stokesI"))
         vt = weight_visibility(vt, dirty)
 
@@ -185,7 +192,7 @@ if __name__ == '__main__':
 
         export_image_to_fits(dirty, '%s/imaging-wterm_dirty.fits' % (results_dir))
 
-        dirtyFacet = create_image_from_visibility(vt, npixel=npixel, npol=1) #, cellsize=cellsize)
+        dirtyFacet = create_image_from_visibility(vt, npixel=npixel, npol=1, cellsize=cellsize)
         future = invert_list_arlexecute_workflow([vt], [dirtyFacet], facets=4, context='facets')
         dirtyFacet, sumwt = arlexecute.compute(future, sync=True)[0]
 
@@ -198,7 +205,7 @@ if __name__ == '__main__':
             "Max, min in dirty image = %.6f, %.6f, sumwt = %f" % (dirtyFacet.data.max(), dirtyFacet.data.min(), sumwt))
         export_image_to_fits(dirtyFacet, '%s/imaging-wterm_dirtyFacet.fits' % (results_dir))
 
-        dirtyFacet2 = create_image_from_visibility(vt, npixel=npixel, npol=1) # cellsize=cellsize,
+        dirtyFacet2 = create_image_from_visibility(vt, npixel=npixel, npol=1, cellsize=cellsize)
         future = invert_list_arlexecute_workflow([vt], [dirtyFacet2], facets=2, context='facets')
         dirtyFacet2, sumwt = arlexecute.compute(future, sync=True)[0]
 
@@ -217,7 +224,7 @@ if __name__ == '__main__':
             plt.title("Wterm image")
             plt.savefig('%s/%s_wterm.pdf' % (results_dir, str(freq)))
 
-        dirtywstack = create_image_from_visibility(vt, npixel=npixel, npol=1) #, cellsize=cellsize)
+        dirtywstack = create_image_from_visibility(vt, npixel=npixel, npol=1, cellsize=cellsize)
         future = invert_list_arlexecute_workflow([vt], [dirtywstack], vis_slices=101, context='wstack')
         dirtywstack, sumwt = arlexecute.compute(future, sync=True)[0]
 
@@ -233,7 +240,7 @@ if __name__ == '__main__':
 
         for rows in vis_timeslice_iter(vt):
             visslice = create_visibility_from_rows(vt, rows)
-            dirtySnapshot = create_image_from_visibility(visslice, npixel=npixel, npol=1, #cellsize=cellsize,
+            dirtySnapshot = create_image_from_visibility(visslice, npixel=npixel, npol=1, cellsize=cellsize,
                                                          compress_factor=0.0)
             future = invert_list_arlexecute_workflow([visslice], [dirtySnapshot], context='2d')
             dirtySnapshot, sumwt = arlexecute.compute(future, sync=True)[0]
@@ -247,7 +254,7 @@ if __name__ == '__main__':
                 plt.savefig('%s/%s_snapshot%03d.pdf' % (results_dir, str(freq),(numpy.average(visslice.time) * 12.0 / 43200.0)))
                 # plt.show()
 
-        dirtyTimeslice = create_image_from_visibility(vt, npixel=npixel, npol=1) #, cellsize=cellsize)
+        dirtyTimeslice = create_image_from_visibility(vt, npixel=npixel, npol=1, cellsize=cellsize)
         future = invert_list_arlexecute_workflow([vt], [dirtyTimeslice], vis_slices=vis_timeslices(vt, 'auto'),
                                                padding=2, context='timeslice')
         dirtyTimeslice, sumwt = arlexecute.compute(future, sync=True)[0]
@@ -265,9 +272,9 @@ if __name__ == '__main__':
 
         export_image_to_fits(dirtyTimeslice, '%s/imaging-wterm_dirty_Timeslice.fits' % (results_dir))
 
-        # dirtyWProjection = create_image_from_visibility(vt, npixel=npixel, npol=1) #cellsize=0.001
+        # dirtyWProjection = create_image_from_visibility(vt, npixel=npixel, npol=1, cellsize= cellsize)
         #
-        # gcfcf = create_awterm_convolutionfunction(model, nw=20, wstep=200.0 / 21, oversampling=8,
+        # gcfcf = create_awterm_convolutionfunction(model, nw=4100, wstep=4100.0 / 4, oversampling=8,
         #                                           support=60,
         #                                           use_aaf=True)
         #
