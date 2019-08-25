@@ -8,52 +8,60 @@ matplotlib.use('Agg')
 
 from matplotlib import pylab
 
-from matplotlib import pyplot as plt
-# from matplotlib import plt.savefig
-from astropy.coordinates import EarthLocation, SkyCoord
-
-pylab.rcParams['figure.figsize'] = (10.0, 10.0)
+pylab.rcParams['figure.figsize'] = (6.0, 6.0)
 pylab.rcParams['image.cmap'] = 'rainbow'
 
 BASE_DIR=os.path.dirname(os.path.abspath(__file__))
 
-# sys.path.append(os.path.join('..','..'))
+sys.path.append(os.path.join('..', '..'))
 
 from data_models.parameters import arl_path
-# results_dir = arl_path('test_results')
+
+
+from matplotlib import pylab
+
+import numpy
 
 from astropy.coordinates import SkyCoord
-from astropy.time import Time
 from astropy import units as u
 from astropy.wcs.utils import pixel_to_skycoord
 
+from matplotlib import pyplot as plt
+from mpl_toolkits.mplot3d import Axes3D
+
 from data_models.polarisation import PolarisationFrame
+from astropy.coordinates import EarthLocation, SkyCoord
 
 from wrappers.serial.image.iterators import image_raster_iter
-
-from wrappers.serial.visibility.base import create_visibility
-from wrappers.serial.visibility.operations import sum_visibility
-from wrappers.serial.visibility.iterators import vis_timeslices, vis_wslices
+from processing_library.image.operations import create_w_term_like
 from wrappers.serial.simulation.configurations import create_configuration_from_file
-from wrappers.serial.skycomponent.operations import create_skycomponent, find_skycomponents, \
-    find_nearest_skycomponent, insert_skycomponent
-from wrappers.serial.image.operations import show_image, export_image_to_fits, qa_image, smooth_image
-from wrappers.serial.imaging.base import advise_wide_field, create_image_from_visibility, \
-    predict_skycomponent_visibility
+# Use serial wrappers by default
+from wrappers.serial.visibility.base import create_visibility, create_visibility, create_visibility_from_rows
+from wrappers.serial.skycomponent.operations import create_skycomponent
+from wrappers.serial.image.operations import show_image, export_image_to_fits
+from wrappers.serial.visibility.iterators import vis_timeslice_iter
+from wrappers.serial.simulation.configurations import create_named_configuration
+from wrappers.serial.imaging.base import invert_2d, create_image_from_visibility, \
+    predict_skycomponent_visibility, advise_wide_field
+from wrappers.serial.visibility.iterators import vis_timeslice_iter
+from wrappers.serial.imaging.weighting import weight_visibility
+from wrappers.serial.visibility.iterators import vis_timeslices
 
 from wrappers.arlexecute.griddata.kernels import create_awterm_convolutionfunction
 from wrappers.arlexecute.griddata.convolution_functions import apply_bounding_box_convolutionfunction
 
-# Use workflows for imaging
+# Use arlexecute for imaging
 from wrappers.arlexecute.execution_support.arlexecute import arlexecute
-from workflows.shared.imaging.imaging_shared import imaging_contexts
-from workflows.arlexecute.imaging.imaging_arlexecute import predict_list_arlexecute_workflow, \
-    invert_list_arlexecute_workflow
+from workflows.arlexecute.imaging.imaging_arlexecute import invert_list_arlexecute_workflow
 
 import logging
-from data_models.parameters import arl_path
 
-# results_dir = arl_path('test_results')
+log = logging.getLogger()
+log.setLevel(logging.DEBUG)
+log.addHandler(logging.StreamHandler(sys.stdout))
+
+doplot = True
+
 dask_dir = BASE_DIR+"/dask-work-space/" #arl_path('test_results/dask-work-space')
 if not os.path.isdir(dask_dir):  
     os.mkdir(dask_dir) 
@@ -67,9 +75,14 @@ def init_logging():
 
 def create_configuration(name: str = 'LOWBD2', **kwargs):
     location = EarthLocation(lon=115.2505, lat=42.211833333, height=1365.0)
-    lowcore = create_configuration_from_file(antfile="muser-1.csv",
-                                            mount='altaz', names='MUSER_%d',
-                                            diameter=4.0, name='MUSER', location=location, **kwargs)
+    if name=='MUSER-2':
+        lowcore = create_configuration_from_file(antfile="muser-2.csv",
+                                                mount='altaz', names='MUSER_%d',
+                                                diameter=2.0, name='MUSER', location=location, **kwargs)
+    else:
+        lowcore = create_configuration_from_file(antfile="muser-1.csv",
+                                                mount='altaz', names='MUSER_%d',
+                                                diameter=4.0, name='MUSER', location=location, **kwargs)
     return lowcore
 
 if __name__ == '__main__':
@@ -78,237 +91,191 @@ if __name__ == '__main__':
     log.setLevel(logging.DEBUG)
     log.addHandler(logging.StreamHandler(sys.stdout))
 
-    pylab.rcParams['figure.figsize'] = (12.0, 12.0)
+    pylab.rcParams['figure.figsize'] = (5.0, 5.0)
     pylab.rcParams['image.cmap'] = 'rainbow'
-    pylab.rcParams['font.size'] = 12
+    pylab.rcParams['font.size'] = 9
 
-    lowcore = create_configuration('MUSER')
-    # lowcore = create_named_configuration('MUSER')
-    # arlexecute.set_client(use_dask=True)
-    arlexecute.set_client(use_dask=True, threads_per_worker=1, memory_limit=32 * 1024 * 1024 * 1024, n_workers=8,
-                          local_dir=dask_dir)
-    times = numpy.array([-3.0, -2.0, -1.0, 0.0, 1.0, 2.0, 3.0]) * (numpy.pi / 12.0)  #[-3.0, -2.0, -1.0, 0.0, 1.0, 2.0, 3.0]
-    frequency = numpy.array([4e8])
-    storedir = str(frequency//1e6)
-    channel_bandwidth = numpy.array([25e6])
-    reffrequency = numpy.max(frequency)
-    phasecentre = SkyCoord(ra=+80 * u.deg, dec=15 * u.deg, frame='icrs', equinox='J2000')
-    vt = create_visibility(lowcore, times, frequency, channel_bandwidth=channel_bandwidth,
-                        weight=1.0, phasecentre=phasecentre,
-                        polarisation_frame=PolarisationFrame('stokesI'))
+    font = {'family': 'Times New Roman',
+            'weight': 'normal',
+            'size': 9}
+    matplotlib.rc('font', **font)
 
-    # print("##################", vt.data)
-    advice = advise_wide_field(vt, wprojection_planes=4)
+    test_list = ( ('MUSER-1',400),('MUSER-1',1400),('MUSER-2',2000),('MUSER-2',15000))
 
-    # plt.clf()
-    plt.plot(vt.data['uvw'][:, 0], vt.data['uvw'][:, 1], '.', color='b')
-    plt.plot(-vt.data['uvw'][:, 0], -vt.data['uvw'][:, 1], '.', color='r')
-    plt.xlabel('U (wavelengths)')
-    plt.ylabel('V (wavelengths)')
-    plt.title("UV coverage")
-    plt.savefig('result/UV_coverage.jpg')
-    # plt.show()
+    for (muser,freq) in test_list:
+        lowcore = create_configuration(muser)
 
-    # vt.data['vis'] *= 0.0
-    npixel=256
+        # lowcore = create_named_configuration('MUSER')
+        # arlexecute.set_client(use_dask=True)
+        arlexecute.set_client(use_dask=True, threads_per_worker=1, memory_limit=8 * 1024 * 1024 * 1024, n_workers=8,
+                              local_dir=dask_dir)
+        times = numpy.array([-3.0, -2.0, -1.0, 0.0, 1.0, 2.0, 3.0]) * (numpy.pi / 12.0)  #[-3.0, -2.0, -1.0, 0.0, 1.0, 2.0, 3.0]
+        # times = numpy.array([0.0]) * (numpy.pi / 12.0)  #[-3.0, -2.0, -1.0, 0.0, 1.0, 2.0, 3.0]
+        frequency = numpy.array([freq*1e6])
+        # Directory of storing result
 
-    # print("*****************", vt.data['vis'])
+        results_dir = str(freq)
+        if not os.path.exists(results_dir):
+            os.makedirs(results_dir)
+            
+        channel_bandwidth = numpy.array([25e6])
+        reffrequency = numpy.max(frequency)
+        phasecentre = SkyCoord(ra=+15 * u.deg, dec= 45 * u.deg, frame='icrs', equinox='J2000')
 
-    model = create_image_from_visibility(vt, npixel=npixel, cellsize=2*3.41e-5, nchan=1,
-                                        polarisation_frame=PolarisationFrame('stokesI'))
-    centre = model.wcs.wcs.crpix-1
-    spacing_pixels = npixel // 8
-    # For an observation for the Sun, the disk is about 34 arcmin, if total FOV is 60 arcmin, then
-    #   the disk edge would be 34/60*8
-    log.info('Spacing in pixels = %s' % spacing_pixels)
-    spacing = model.wcs.wcs.cdelt * spacing_pixels
-    # locations = [-3.5, -2.5, -2.27, -1.5, -1., -0.5, 0.5, 1.0, 1.5, 2.0, 2.5, 3.5]
-    locations = [-3.5, -3.0, -2.3, -1.5,-0.5, 0.5, 1.5, 2.3, 3.0, 3.5]
-
-    original_comps = []
-    # We calculate the source positions in pixels and then calculate the
-    # world coordinates to put in the skycomponent description
-    for iy in locations:
-        for ix in locations:
-            if True: #ix >= iy:
-                p = int(round(centre[0] + ix * spacing_pixels * numpy.sign(model.wcs.wcs.cdelt[0]))), \
-                    int(round(centre[1] + iy * spacing_pixels * numpy.sign(model.wcs.wcs.cdelt[1])))
-                sc = pixel_to_skycoord(p[0], p[1], model.wcs)
-                # log.info("Component at (%f, %f) [0-rel] %s" % (p[0], p[1], str(sc)))
-                flux = numpy.array([[200.0]]) #numpy.array([[100.0 + 2.0 * ix + iy * 20.0]])
-                comp = create_skycomponent(flux=flux, frequency=frequency, direction=sc,
-                                        polarisation_frame=PolarisationFrame('stokesI'))
-                original_comps.append(comp)
-                insert_skycomponent(model, comp)
-
-    predict_skycomponent_visibility(vt, original_comps)
-
-
-    cmodel = smooth_image(model)
-    show_image(cmodel)
-    plt.title("Smoothed model image")
-    plt.savefig('result/400_1.jpg')
-    #plt.show()
-
-    comps = find_skycomponents(cmodel, fwhm=1.0, threshold=10.0, npixels=5)
-    plt.clf()
-    for i in range(len(comps)):
-        ocomp, sep = find_nearest_skycomponent(comps[i].direction, original_comps)
-        plt.plot((comps[i].direction.ra.value  - ocomp.direction.ra.value)/cmodel.wcs.wcs.cdelt[0],
-                (comps[i].direction.dec.value - ocomp.direction.dec.value)/cmodel.wcs.wcs.cdelt[1],
-                '.', color='r')
-
-    plt.xlabel('delta RA (pixels)')
-    plt.ylabel('delta DEC (pixels)')
-    plt.title("Recovered - Original position offsets")
-    plt.savefig('result/400_2.jpg')
-    # plt.show()
-
-    wstep = 8.0
-    # nw = int(1.1 * 800/wstep)
-    nw1 = int(1.1 * 2.0 * numpy.max(numpy.abs(vt.w)) / wstep)
-    # gcfcf = create_awterm_convolutionfunction(model, nw=110, wstep=8, oversampling=8,
-
-    gcfcf = create_awterm_convolutionfunction(model,nw=nw1,wstep=8,oversampling=8,support=6,use_aaf=True)
-
-    cf=gcfcf[1]
-    plt.clf()
-    plt.imshow(numpy.real(cf.data[0,0,0,0,0,:,:]))
-    plt.title(str(numpy.max(numpy.abs(cf.data[0,0,0,0,0,:,:]))))
-    plt.savefig('result/400_3.jpg')
-    # plt.show()
-
-    cf_clipped = apply_bounding_box_convolutionfunction(cf, fractional_level=1e-3)
-    # print(cf_clipped.data.shape)
-    gcfcf_clipped=(gcfcf[0], cf_clipped)
-
-    plt.clf()
-    plt.imshow(numpy.real(cf_clipped.data[0,0,0,0,0,:,:]))
-    plt.title(str(numpy.max(numpy.abs(cf_clipped.data[0,0,0,0,0,:,:]))))
-    plt.savefig('result/400_4.jpg')
-    # plt.show()
-
-    contexts = imaging_contexts().keys()
-    print(contexts)
-
-    #dict_keys(['facets_wstack', 'facets_timeslice', '2d', 'wstack', 'wprojection', 'timeslice', 'facets', 'wsnapshots'])
-
-    print(gcfcf_clipped[1])
-
-    # contexts = ['2d', 'facets', 'timeslice', 'wstack', 'wprojection']
-    contexts = ['2d', 'facets', 'wprojection']
-
-    for context in contexts:
-
-        print('Processing context %s' % context)
-
-        vtpredict_list =[create_visibility(lowcore, times, frequency, channel_bandwidth=channel_bandwidth,
-            weight=1.0, phasecentre=phasecentre, polarisation_frame=PolarisationFrame('stokesI'))]
-        model_list = [model]
-        vtpredict_list = arlexecute.compute(vtpredict_list, sync=True)
-        vtpredict_list = arlexecute.scatter(vtpredict_list)
-
-        if context == 'wprojection':
-            future = predict_list_arlexecute_workflow(vtpredict_list, model_list, context=context, facets=4)  #gcfcf=[gcfcf_clipped]
-
-        elif context == 'facets':
-            future = predict_list_arlexecute_workflow(vtpredict_list, model_list, context=context, facets=4)
-
-        # elif context == 'timeslice':
-        #     future = predict_list_arlexecute_workflow(vtpredict_list, model_list, context=context, vis_slices=vis_timeslices(
-        #         vtpredict, 'auto'))
-        #
-        # elif context == 'wstack':
-        #     future = predict_list_arlexecute_workflow(vtpredict_list, model_list, context=context, vis_slices=31)
-
-        else:
-            future = predict_list_arlexecute_workflow(vtpredict_list, model_list, context=context)
-
-        vtpredict_list = arlexecute.compute(future, sync=True)
-
-        vtpredict = vtpredict_list[0]
-
-        uvdist = numpy.sqrt(vt.data['uvw'][:, 0] ** 2 + vt.data['uvw'][:, 1] ** 2)
-        plt.clf()
-        # print("#######vis############:", numpy.abs(vt.data['vis'][:]))
-        plt.plot(uvdist, numpy.abs(vt.data['vis'][:]), '.', color='r', label="DFT")
-
-        plt.plot(uvdist, numpy.abs(vtpredict.data['vis'][:]), '.', color='b', label=context)
-        plt.plot(uvdist, numpy.abs(vtpredict.data['vis'][:] - vt.data['vis'][:]), '.', color='g', label="Residual")
-        plt.xlabel('uvdist')
-        plt.ylabel('Amp Visibility')
-        plt.legend()
-        plt.savefig('result/400_'+context+'.jpg')
-
-
-    for context in contexts:
-
-        targetimage_list = [create_image_from_visibility(vt, npixel=npixel, cellsize=6.8e-5, nchan=1,
-                                                polarisation_frame=PolarisationFrame('stokesI'))]
-
-        vt_list = [vt]
-
-
-        print('Processing context %s' % context)
-        if context == 'wprojection':
-            future = invert_list_arlexecute_workflow(vt_list, targetimage_list, context=context, facets=4)  #, gcfcf=[gcfcf_clipped]
-
-        elif context == 'facets':
-            future = invert_list_arlexecute_workflow(vt_list, targetimage_list, context=context, facets=4)
-
-        # elif context == 'timeslice':
-        #     future = invert_list_arlexecute_workflow(vt_list, targetimage_list, context=context, vis_slices=vis_timeslices(vt, 'auto'))
-
-        # elif context == 'wstack':
-        #     future = invert_list_arlexecute_workflow(vt_list, targetimage_list, context=context, vis_slices=31)
-
-        else:
-            future = invert_list_arlexecute_workflow(vt_list, targetimage_list, context=context)
-
-        result = arlexecute.compute(future, sync=True)
-        targetimage = result[0][0]
-
-        show_image(targetimage)
-        plt.title(context)
-        plt.savefig('result/400_I_'+context+'.jpg')
-
-        #plt.show()
-
-        print("Dirty Image %s" % qa_image(targetimage, context="imaging-fits notebook, using processor %s" % context))
-
-        export_image_to_fits(targetimage, '%s/imaging-fits_dirty_%s.fits' % ('result', context))
-        comps = find_skycomponents(targetimage, fwhm=1.0, threshold=10.0, npixels=5)
-
-        plt.clf()
-        for comp in comps:
-            distance = comp.direction.separation(model.phasecentre)
-            dft_flux = sum_visibility(vt, comp.direction)[0]
-            err = (comp.flux[0, 0] - dft_flux) / dft_flux
-            plt.plot(distance, err, '.', color='r')
-        plt.ylabel('Fractional error of image vs DFT')
-        plt.xlabel('Distance from phasecentre (deg)')
-        plt.title(
-            "Fractional error in %s recovered flux vs distance from phasecentre" %
-            context)
-        plt.savefig('result/400_D_'+context+'.jpg')
         # plt.show()
 
-        checkpositions = True
-        if checkpositions:
-            plt.clf()
-            for i in range(len(comps)):
-                ocomp, sep = find_nearest_skycomponent(comps[i].direction, original_comps)
-                plt.plot(
-                    (comps[i].direction.ra.value - ocomp.direction.ra.value) /
-                    targetimage.wcs.wcs.cdelt[0],
-                    (comps[i].direction.dec.value - ocomp.direction.dec.value) /
-                    targetimage.wcs.wcs.cdelt[1],
-                    '.',
-                    color='r')
+        # vt.data['vis'] *= 0.0
+        npixel=512
+        # cellsize = None #1*3.1415926535/180./npixel
+        cellsize = round(1.*numpy.pi/180./npixel,7)/2.
+        facets = 8
+        flux = numpy.array([[200.0]])
 
-            plt.xlabel('delta RA (pixels)')
-            plt.ylabel('delta DEC (pixels)')
-            plt.title("%s: Position offsets" % context)
-            plt.savefig('result/400_CK_'+context+'.jpg')
+        vt = create_visibility(lowcore, times, frequency, channel_bandwidth=channel_bandwidth,
+                            weight=1.0, phasecentre=phasecentre,
+                            polarisation_frame=PolarisationFrame('stokesI'))
 
-            # plt.show()
+        advice = advise_wide_field(vt, wprojection_planes=1)
+
+        # plt.clf()
+        plt.plot(vt.data['uvw'][:, 0], vt.data['uvw'][:, 1], '.', color='b')
+        plt.plot(-vt.data['uvw'][:, 0], -vt.data['uvw'][:, 1], '.', color='r')
+        plt.xlabel('U (wavelengths)')
+        plt.ylabel('V (wavelengths)')
+        plt.title("UV coverage")
+        plt.savefig(results_dir+'/UV_coverage.pdf',format='pdf')
+
+        vt.data['vis'] *= 0.0
+
+        model = create_image_from_visibility(vt, npixel=npixel, npol=1) #, cellsize=cellsize)
+        spacing_pixels = npixel // facets
+        log.info('Spacing in pixels = %s' % spacing_pixels)
+        spacing = model.wcs.wcs.cdelt* spacing_pixels #180.0 * cellsize * spacing_pixels / numpy.pi
+        centers = -1.5, -0.5, +0.5, +1.5
+        comps = list()
+        for iy in centers:
+            for ix in centers:
+                pra = int(round(npixel // 2 + ix * spacing_pixels - 1))
+                pdec = int(round(npixel // 2 + iy * spacing_pixels - 1))
+                sc = pixel_to_skycoord(pra, pdec, model.wcs)
+                log.info("Component at (%f, %f) %s" % (pra, pdec, str(sc)))
+                comp = create_skycomponent(flux=flux, frequency=frequency, direction=sc,
+                                           polarisation_frame=PolarisationFrame("stokesI"))
+                comps.append(comp)
+        predict_skycomponent_visibility(vt, comps)
+
+        arlexecute.set_client(use_dask=True)
+
+        dirty = create_image_from_visibility(vt, npixel=npixel, #cellsize=cellsize,
+                                             polarisation_frame=PolarisationFrame("stokesI"))
+        vt = weight_visibility(vt, dirty)
+
+        future = invert_list_arlexecute_workflow([vt], [dirty], context='2d')
+        dirty, sumwt = arlexecute.compute(future, sync=True)[0]
+
+        if doplot:
+            show_image(dirty)
+
+        print("Max, min in dirty image = %.6f, %.6f, sumwt = %f" % (dirty.data.max(), dirty.data.min(), sumwt))
+
+        export_image_to_fits(dirty, '%s/imaging-wterm_dirty.fits' % (results_dir))
+
+        dirtyFacet = create_image_from_visibility(vt, npixel=npixel, npol=1) #, cellsize=cellsize)
+        future = invert_list_arlexecute_workflow([vt], [dirtyFacet], facets=4, context='facets')
+        dirtyFacet, sumwt = arlexecute.compute(future, sync=True)[0]
+
+        if doplot:
+            show_image(dirtyFacet)
+            plt.title("Smoothed model image")
+            plt.savefig('%s/%s_smooth.pdf' % (results_dir, str(freq)))
+
+        print(
+            "Max, min in dirty image = %.6f, %.6f, sumwt = %f" % (dirtyFacet.data.max(), dirtyFacet.data.min(), sumwt))
+        export_image_to_fits(dirtyFacet, '%s/imaging-wterm_dirtyFacet.fits' % (results_dir))
+
+        dirtyFacet2 = create_image_from_visibility(vt, npixel=npixel, npol=1) # cellsize=cellsize,
+        future = invert_list_arlexecute_workflow([vt], [dirtyFacet2], facets=2, context='facets')
+        dirtyFacet2, sumwt = arlexecute.compute(future, sync=True)[0]
+
+        if doplot:
+            show_image(dirtyFacet2)
+            plt.title("Dirty Facet image")
+            plt.savefig('%s/%s_dirtyfacet2.pdf' % (results_dir, str(freq)))
+
+        print("Max, min in dirty image = %.6f, %.6f, sumwt = %f" % (
+        dirtyFacet2.data.max(), dirtyFacet2.data.min(), sumwt))
+        export_image_to_fits(dirtyFacet2, '%s/imaging-wterm_dirtyFacet2.fits' % (results_dir))
+
+        if doplot:
+            wterm = create_w_term_like(model, phasecentre=vt.phasecentre, w=numpy.max(vt.w))
+            show_image(wterm)
+            plt.title("Wterm image")
+            plt.savefig('%s/%s_wterm.pdf' % (results_dir, str(freq)))
+
+        dirtywstack = create_image_from_visibility(vt, npixel=npixel, npol=1) #, cellsize=cellsize)
+        future = invert_list_arlexecute_workflow([vt], [dirtywstack], vis_slices=101, context='wstack')
+        dirtywstack, sumwt = arlexecute.compute(future, sync=True)[0]
+
+        show_image(dirtywstack)
+        plt.title("dirtywstack image")
+        plt.savefig('%s/%s_dirtywstack.pdf' % (results_dir, str(freq)))
+        # plt.show()
+
+        print("Max, min in dirty image = %.6f, %.6f, sumwt = %f" %
+              (dirtywstack.data.max(), dirtywstack.data.min(), sumwt))
+
+        export_image_to_fits(dirtywstack, '%s/imaging-wterm_dirty_wstack.fits' % (results_dir))
+
+        for rows in vis_timeslice_iter(vt):
+            visslice = create_visibility_from_rows(vt, rows)
+            dirtySnapshot = create_image_from_visibility(visslice, npixel=npixel, npol=1, #cellsize=cellsize,
+                                                         compress_factor=0.0)
+            future = invert_list_arlexecute_workflow([visslice], [dirtySnapshot], context='2d')
+            dirtySnapshot, sumwt = arlexecute.compute(future, sync=True)[0]
+
+            print("Max, min in dirty image = %.6f, %.6f, sumwt = %f" %
+                  (dirtySnapshot.data.max(), dirtySnapshot.data.min(), sumwt))
+            if doplot:
+                dirtySnapshot.data -= dirtyFacet.data
+                show_image(dirtySnapshot)
+                plt.title("Hour angle %.2f hours" % (numpy.average(visslice.time) * 12.0 / 43200.0))
+                plt.savefig('%s/%s_snapshot%03d.pdf' % (results_dir, str(freq),(numpy.average(visslice.time) * 12.0 / 43200.0)))
+                # plt.show()
+
+        dirtyTimeslice = create_image_from_visibility(vt, npixel=npixel, npol=1) #, cellsize=cellsize)
+        future = invert_list_arlexecute_workflow([vt], [dirtyTimeslice], vis_slices=vis_timeslices(vt, 'auto'),
+                                               padding=2, context='timeslice')
+        dirtyTimeslice, sumwt = arlexecute.compute(future, sync=True)[0]
+
+
+        show_image(dirtyTimeslice)
+        plt.title("Dirty Timeslice")
+        plt.savefig(
+            '%s/%s_snapshot.pdf' % (results_dir, str(freq)))
+
+        # plt.show()
+
+        print("Max, min in dirty image = %.6f, %.6f, sumwt = %f" %
+              (dirtyTimeslice.data.max(), dirtyTimeslice.data.min(), sumwt))
+
+        export_image_to_fits(dirtyTimeslice, '%s/imaging-wterm_dirty_Timeslice.fits' % (results_dir))
+
+        # dirtyWProjection = create_image_from_visibility(vt, npixel=npixel, npol=1) #cellsize=0.001
+        #
+        # gcfcf = create_awterm_convolutionfunction(model, nw=20, wstep=200.0 / 21, oversampling=8,
+        #                                           support=60,
+        #                                           use_aaf=True)
+        #
+        # future = invert_list_arlexecute_workflow([vt], [dirtyWProjection], context='2d', gcfcf=[gcfcf])
+        #
+        # dirtyWProjection, sumwt = arlexecute.compute(future, sync=True)[0]
+        #
+        # if doplot:
+        #     show_image(dirtyWProjection)
+        #     plt.title("Dirty Wprojection")
+        #     plt.savefig(
+        #         '%s/%s_dirtywprojectionsnapshot.pdf' % (results_dir, str(freq)))
+        #
+        # print("Max, min in dirty image = %.6f, %.6f, sumwt = %f" % (dirtyWProjection.data.max(),
+        #                                                             dirtyWProjection.data.min(), sumwt))
+        # export_image_to_fits(dirtyWProjection, '%s/imaging-wterm_dirty_WProjection.fits' % (results_dir))
