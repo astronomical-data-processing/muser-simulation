@@ -83,20 +83,28 @@ def create_configuration(name: str = 'LOWBD2', **kwargs):
 
 if __name__ == '__main__':
 
+    fh = logging.FileHandler('musersim.log')
+    fh.setLevel(logging.DEBUG)
+
     log = logging.getLogger()
     log.setLevel(logging.DEBUG)
     log.addHandler(logging.StreamHandler(sys.stdout))
+    log.addHandler(fh)
 
     pylab.rcParams['figure.figsize'] = (5.0, 5.0)
     pylab.rcParams['image.cmap'] = 'rainbow'
     pylab.rcParams['font.size'] = 10
 
+    # Define Font for Matplotlib
     font = {'family': 'Times New Roman',
             'weight': 'normal',
             'size': 10}
     matplotlib.rc('font', **font)
 
-    test_list = (('MUSER-1', 400), ('MUSER-1', 1400))  # ,('MUSER-2',2000),('MUSER-2',15000))
+    # MUSER-1 400Mhz - 1975 Mhz
+    # MUSER-2 2000 Mhz - 15000 Mhz
+
+    test_list = (('MUSER-1', 400),) #, ('MUSER-1', 1400))  # ,('MUSER-2',2000),('MUSER-2',15000))
 
     for (muser, freq) in test_list:
         lowcore = create_configuration(muser)
@@ -105,6 +113,19 @@ if __name__ == '__main__':
         # arlexecute.set_client(use_dask=True)
         arlexecute.set_client(use_dask=True, threads_per_worker=1, memory_limit=8 * 1024 * 1024 * 1024, n_workers=8,
                               local_dir=dask_dir)
+
+        if freq==400:
+            npixel=256
+        elif freq>1000 and freq<2000:
+            npixel = 1024
+        elif freq>=2000 and freq<6000:
+            npixel = 2048
+        elif freq >= 6000 and freq <= 12000:
+            npixel = 4096
+        else:
+            npixel = 6144
+        cellsize = 1. * numpy.pi / 180. / (npixel)
+
         times = numpy.array([-3.0, -2.0, -1.0, 0.0, 1.0, 2.0, 3.0]) * (
                     numpy.pi / 12.0)  # [-3.0, -2.0, -1.0, 0.0, 1.0, 2.0, 3.0]
         # times = numpy.array([0.0]) * (numpy.pi / 12.0)  #[-3.0, -2.0, -1.0, 0.0, 1.0, 2.0, 3.0]
@@ -116,7 +137,7 @@ if __name__ == '__main__':
 
         channel_bandwidth = numpy.array([25e6])
         reffrequency = numpy.max(frequency)
-        phasecentre = SkyCoord(ra=+80 * u.deg, dec=15 * u.deg, frame='icrs', equinox='J2000')
+        phasecentre = SkyCoord(ra=+80 * u.deg, dec=41 * u.deg, frame='icrs', equinox='J2000')
         vt = create_visibility(lowcore, times, frequency, channel_bandwidth=channel_bandwidth,
                                weight=1.0, phasecentre=phasecentre,
                                polarisation_frame=PolarisationFrame('stokesI'))
@@ -134,11 +155,10 @@ if __name__ == '__main__':
         # plt.show()
 
         # vt.data['vis'] *= 0.0
-        npixel = 512
-        cellsize = None  # 1*3.1415926535/180./npixel
+
         # print("*****************", vt.data['vis'])
 
-        model = create_image_from_visibility(vt, npixel=npixel, nchan=1, #cellsize=cellsize,
+        model = create_image_from_visibility(vt, npixel=npixel, nchan=1, cellsize=cellsize,
                                              polarisation_frame=PolarisationFrame('stokesI'))
         centre = model.wcs.wcs.crpix - 1
         spacing_pixels = npixel // 8
@@ -170,7 +190,7 @@ if __name__ == '__main__':
         cmodel = smooth_image(model)
         show_image(cmodel)
         plt.title("Smoothed model image")
-        plt.savefig('%s/%s_1.pdf' % (storedir, str(freq)))
+        plt.savefig('%s/%s_smoothed.pdf' % (storedir, str(freq)))
         # plt.show()
 
         comps = find_skycomponents(cmodel, fwhm=1.0, threshold=10.0, npixels=5)
@@ -180,14 +200,17 @@ if __name__ == '__main__':
             ocomp, sep = find_nearest_skycomponent(comps[i].direction, original_comps)
             log.info('Position offset %d %f %f' % (i, comps[i].direction.ra.value - ocomp.direction.ra.value,
                                                    comps[i].direction.dec.value - ocomp.direction.dec.value))
-            plt.plot((comps[i].direction.ra.value - ocomp.direction.ra.value) / cmodel.wcs.wcs.cdelt[0],
-                     (comps[i].direction.dec.value - ocomp.direction.dec.value) / cmodel.wcs.wcs.cdelt[1],
+            plt.plot((comps[i].direction.ra.value - ocomp.direction.ra.value),
+                     (comps[i].direction.dec.value - ocomp.direction.dec.value),
                      '.', color='r')
+            # plt.plot((comps[i].direction.ra.value - ocomp.direction.ra.value) / cmodel.wcs.wcs.cdelt[0],
+            #          (comps[i].direction.dec.value - ocomp.direction.dec.value) / cmodel.wcs.wcs.cdelt[1],
+            #          '.', color='r')
 
         plt.xlabel('delta RA (pixels)')
         plt.ylabel('delta DEC (pixels)')
         plt.title("Recovered - Original position offsets")
-        plt.savefig('%s/%s_2.pdf' % (storedir, str(freq)))
+        plt.savefig('%s/%s_R_O.pdf' % (storedir, str(freq)))
         # plt.show()
 
         wstep = 8.0
@@ -266,8 +289,9 @@ if __name__ == '__main__':
             plt.plot(uvdist, numpy.abs(vtpredict.data['vis'][:] - vt.data['vis'][:]), '.', color='g', label="Residual")
             plt.xlabel('uvdist')
             plt.ylabel('Amp Visibility')
-            plt.legend()
-            plt.savefig('%s/%s_%s.pdf' % (storedir, str(freq), context))
+            plt.axis('on')
+            # plt.legend()
+            plt.savefig('%s/%s_%s_amp.pdf' % (storedir, str(freq), context))
 
         for context in contexts:
 
@@ -303,7 +327,7 @@ if __name__ == '__main__':
 
             show_image(targetimage)
             plt.title(context)
-            plt.savefig('%s/%s_I_%s.pdf' % (storedir, str(freq), context))
+            plt.savefig('%s/%s_dirty_%s.pdf' % (storedir, str(freq), context))
 
             # plt.show()
 
@@ -355,7 +379,7 @@ if __name__ == '__main__':
             #                      '%s/test_imaging_%s_deconvolved.fits' % (storedir, context))
             show_image(deconvolved)
             plt.title(context)
-            plt.savefig('%s/test_imaging_%s_deconvolved.pdf' % (storedir, context))
+            plt.savefig('%s/test_imaging_%s_clean.pdf' % (storedir, context))
 
             residual_imagelist = residual_list_arlexecute_workflow(vt_list, model_imagelist=dec_imagelist,
                                                                    context=context)
@@ -365,7 +389,7 @@ if __name__ == '__main__':
             residualed = residual_imagelist[0][0]
             show_image(residualed)
             plt.title(context)
-            plt.savefig('%s/test_imaging_%s_residualed.pdf' % (storedir, context))
+            plt.savefig('%s/test_imaging_%s_residual.pdf' % (storedir, context))
 
             # export_image_to_fits(residualed,
             #                      '%s/test_imaging_%s_residualed.fits' % (storedir, context))

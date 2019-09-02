@@ -38,11 +38,12 @@ from wrappers.serial.simulation.configurations import create_configuration_from_
 # Use serial wrappers by default
 from wrappers.serial.visibility.base import create_visibility, create_visibility, create_visibility_from_rows
 from wrappers.serial.skycomponent.operations import create_skycomponent
-from wrappers.serial.image.operations import show_image, export_image_to_fits
+from wrappers.serial.image.operations import show_image, export_image_to_fits, qa_image, smooth_image
 from wrappers.serial.visibility.iterators import vis_timeslice_iter
 from wrappers.serial.simulation.configurations import create_named_configuration
 from wrappers.serial.imaging.base import invert_2d, create_image_from_visibility, \
     predict_skycomponent_visibility, advise_wide_field
+
 from wrappers.serial.visibility.iterators import vis_timeslice_iter
 from wrappers.serial.imaging.weighting import weight_visibility
 from wrappers.serial.visibility.iterators import vis_timeslices
@@ -87,10 +88,13 @@ def create_configuration(name: str = 'LOWBD2', **kwargs):
 
 if __name__ == '__main__':
 
-    init_logging()
+    fh = logging.FileHandler('musersim.log')
+    fh.setLevel(logging.DEBUG)
+
     log = logging.getLogger()
     log.setLevel(logging.DEBUG)
     log.addHandler(logging.StreamHandler(sys.stdout))
+    log.addHandler(fh)
 
     pylab.rcParams['figure.figsize'] = (5.0, 5.0)
     pylab.rcParams['image.cmap'] = 'rainbow'
@@ -101,7 +105,7 @@ if __name__ == '__main__':
             'size': 9}
     matplotlib.rc('font', **font)
 
-    test_list = (('MUSER-2',4000),) #,('MUSER-1',1400),('MUSER-2',2000),('MUSER-2',15000))
+    test_list = (('MUSER-1',1400),) #,('MUSER-1',1400),('MUSER-2',2000),('MUSER-2',15000))
 
     arlexecute.set_client(use_dask=True, threads_per_worker=1, memory_limit=16 * 1024 * 1024 * 1024, n_workers=8,
                           local_dir=dask_dir)
@@ -186,7 +190,9 @@ if __name__ == '__main__':
         dirty, sumwt = arlexecute.compute(future, sync=True)[0]
 
         if doplot:
-            show_image(dirty)
+            show_image(dirty,cm='hot')
+            plt.title("Dirty image")
+            plt.savefig('%s/%s_dirty.pdf' % (results_dir, str(freq)))
 
         print("Max, min in dirty image = %.6f, %.6f, sumwt = %f" % (dirty.data.max(), dirty.data.min(), sumwt))
 
@@ -195,9 +201,9 @@ if __name__ == '__main__':
         dirtyFacet = create_image_from_visibility(vt, npixel=npixel, npol=1, cellsize=cellsize)
         future = invert_list_arlexecute_workflow([vt], [dirtyFacet], facets=4, context='facets')
         dirtyFacet, sumwt = arlexecute.compute(future, sync=True)[0]
-
+        dirtyFacet = smooth_image(dirtyFacet)
         if doplot:
-            show_image(dirtyFacet)
+            show_image(dirtyFacet,cm='hot')
             plt.title("Smoothed model image")
             plt.savefig('%s/%s_smooth.pdf' % (results_dir, str(freq)))
 
@@ -210,7 +216,7 @@ if __name__ == '__main__':
         dirtyFacet2, sumwt = arlexecute.compute(future, sync=True)[0]
 
         if doplot:
-            show_image(dirtyFacet2)
+            show_image(dirtyFacet2,cm='hot')
             plt.title("Dirty Facet image")
             plt.savefig('%s/%s_dirtyfacet2.pdf' % (results_dir, str(freq)))
 
@@ -244,22 +250,23 @@ if __name__ == '__main__':
                                                          compress_factor=0.0)
             future = invert_list_arlexecute_workflow([visslice], [dirtySnapshot], context='2d')
             dirtySnapshot, sumwt = arlexecute.compute(future, sync=True)[0]
-
+            dirtySnapshot = smooth_image(dirtySnapshot)
             print("Max, min in dirty image = %.6f, %.6f, sumwt = %f" %
                   (dirtySnapshot.data.max(), dirtySnapshot.data.min(), sumwt))
             if doplot:
+
                 dirtySnapshot.data -= dirtyFacet.data
-                show_image(dirtySnapshot)
+                show_image(dirtySnapshot,cm='hot')
                 plt.title("Hour angle %.2f hours" % (numpy.average(visslice.time) * 12.0 / 43200.0))
                 plt.savefig('%s/%s_snapshot%03d.pdf' % (results_dir, str(freq),(numpy.average(visslice.time) * 12.0 / 43200.0)))
                 # plt.show()
 
         dirtyTimeslice = create_image_from_visibility(vt, npixel=npixel, npol=1, cellsize=cellsize)
         future = invert_list_arlexecute_workflow([vt], [dirtyTimeslice], vis_slices=vis_timeslices(vt, 'auto'),
-                                               padding=2, context='timeslice')
+                                               padding=2, context='2d')
         dirtyTimeslice, sumwt = arlexecute.compute(future, sync=True)[0]
 
-
+        dirtyTimeslice.data -= dirtyFacet.data
         show_image(dirtyTimeslice)
         plt.title("Dirty Timeslice")
         plt.savefig(
