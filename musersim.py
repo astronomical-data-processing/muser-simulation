@@ -263,7 +263,7 @@ if __name__ == '__main__':
 
         dirtyTimeslice = create_image_from_visibility(vt, npixel=npixel, npol=1, cellsize=cellsize)
         future = invert_list_arlexecute_workflow([vt], [dirtyTimeslice], vis_slices=vis_timeslices(vt, 'auto'),
-                                               padding=2, context='2d')
+                                               padding=2, context='timeslice')
         dirtyTimeslice, sumwt = arlexecute.compute(future, sync=True)[0]
 
         dirtyTimeslice.data -= dirtyFacet.data
